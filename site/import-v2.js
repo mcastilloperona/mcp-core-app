@@ -11,6 +11,17 @@ function haversineKm(a,b){
   const h=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(h));
 }
+function inferGpxSport(name,distanceKm,durationMin){
+  const n=String(name||'').toLowerCase();
+  if(/run|running|correr|carrera|rodaje|series|tempo/.test(n)) return {sport:'running',confidence:'high',reason:'nombre del track'};
+  if(/bike|bici|cycling|ciclismo|mtb|gravel|road/.test(n)) return {sport:'cycling',confidence:'high',reason:'nombre del track'};
+  if(distanceKm&&durationMin){
+    const speed=distanceKm/(durationMin/60);
+    if(speed>=4.5&&speed<=14) return {sport:'running',confidence:'medium',reason:`velocidad media estimada ${speed.toFixed(1)} km/h`};
+    if(speed>=16) return {sport:'cycling',confidence:'medium',reason:`velocidad media estimada ${speed.toFixed(1)} km/h`};
+  }
+  return {sport:'other',confidence:'low',reason:'GPX sin información suficiente para detectar el deporte'};
+}
 function parseGpx(text,fileName){
   const xml=new DOMParser().parseFromString(text,'application/xml');
   if(xml.querySelector('parsererror')) throw new Error('El GPX no es válido.');
@@ -31,7 +42,10 @@ function parseGpx(text,fileName){
   const durationMin=first&&last?Math.max(1,Math.round((last-first)/60000)):null;
   const date=first?first.toISOString().slice(0,10):new Date().toISOString().slice(0,10);
   const name=xml.querySelector('trk > name, metadata > name, rte > name')?.textContent?.trim()||fileName.replace(/\.gpx$/i,'');
-  return {name,date,durationMin,distanceKm:Number(distanceKm.toFixed(2)),elevationM:Math.round(elevationM),source:'gpx'};
+  const detected=inferGpxSport(name,Number(distanceKm.toFixed(2)),durationMin);
+  const avgSpeedKmh=durationMin?Number((distanceKm/(durationMin/60)).toFixed(2)):null;
+  const paceMinKm=durationMin&&distanceKm>0?durationMin/distanceKm:null;
+  return {name,date,durationMin,distanceKm:Number(distanceKm.toFixed(2)),elevationM:Math.round(elevationM),avgSpeedKmh,paceMinKm,detectedSport:detected.sport,detectionConfidence:detected.confidence,detectionReason:detected.reason,source:'gpx'};
 }
 function sportFromFit(value){
   const s=String(value||'').toLowerCase();
@@ -47,11 +61,8 @@ function asNumber(...values){
 }
 async function parseFit(file){
   let FitParser;
-  try{
-    ({default:FitParser}=await import(FIT_PARSER_URL));
-  }catch{
-    throw new Error('No se ha podido cargar el lector FIT. Comprueba la conexión e inténtalo de nuevo.');
-  }
+  try{({default:FitParser}=await import(FIT_PARSER_URL))}
+  catch{throw new Error('No se ha podido cargar el lector FIT. Comprueba la conexión e inténtalo de nuevo.')}
   const parser=new FitParser({mode:'list',force:true,speedUnit:'km/h',lengthUnit:'km',temperatureUnit:'celsius',elapsedRecordField:true});
   let data;
   try{data=await parser.parseAsync(await file.arrayBuffer())}
@@ -71,10 +82,7 @@ async function parseFit(file){
   }
   const durationMin=durationSec?Math.max(1,Math.round(durationSec/60)):null;
   let distanceKm=asNumber(session.total_distance);
-  if(distanceKm==null&&records.length){
-    const lastDistance=asNumber(lastRecord.distance);
-    if(lastDistance!=null) distanceKm=lastDistance;
-  }
+  if(distanceKm==null&&records.length){const lastDistance=asNumber(lastRecord.distance);if(lastDistance!=null) distanceKm=lastDistance}
   const elevationM=asNumber(session.total_ascent,session.total_ascent_1);
   const avgHr=asNumber(session.avg_heart_rate,session.avg_hr);
   const maxHr=asNumber(session.max_heart_rate,session.max_hr);
@@ -84,20 +92,24 @@ async function parseFit(file){
   const calories=asNumber(session.total_calories,session.calories);
   const sport=sportFromFit(session.sport||session.sub_sport||data.sport);
   const title=file.name.replace(/\.fit$/i,'');
-  return {
-    name:title,date,durationMin,distanceKm:distanceKm==null?null:Number(distanceKm.toFixed(2)),elevationM:elevationM==null?null:Math.round(elevationM),
-    avgHr,maxHr,avgPower,normalizedPower,avgCadence,calories,sport,source:'fit'
-  };
+  const avgSpeedKmh=durationMin&&distanceKm?Number((distanceKm/(durationMin/60)).toFixed(2)):null;
+  const paceMinKm=durationMin&&distanceKm?durationMin/distanceKm:null;
+  return {name:title,date,durationMin,distanceKm:distanceKm==null?null:Number(distanceKm.toFixed(2)),elevationM:elevationM==null?null:Math.round(elevationM),avgHr,maxHr,avgPower,normalizedPower,avgCadence,calories,sport,avgSpeedKmh,paceMinKm,source:'fit'};
 }
 function showMessage(box,text,type='ok'){
-  box.textContent=text;
-  box.style.marginTop='10px';
-  box.style.color=type==='error'?'#ff8b91':'#8ee8b7';
+  box.textContent=text;box.style.marginTop='10px';box.style.color=type==='error'?'#ff8b91':'#8ee8b7';
 }
-function summary(data){
+function paceText(value){
+  if(!value||!Number.isFinite(value)) return null;
+  const min=Math.floor(value),sec=Math.round((value-min)*60);
+  return `${min}:${String(sec===60?0:sec).padStart(2,'0')}/km`;
+}
+function summary(data,sport){
   const parts=[];
   if(data.distanceKm!=null) parts.push(`${data.distanceKm} km`);
   if(data.durationMin) parts.push(`${data.durationMin} min`);
+  if(sport==='running'&&data.paceMinKm) parts.push(paceText(data.paceMinKm));
+  else if(data.avgSpeedKmh) parts.push(`${data.avgSpeedKmh} km/h`);
   if(data.elevationM!=null) parts.push(`+${data.elevationM} m`);
   if(data.avgHr!=null) parts.push(`${Math.round(data.avgHr)} ppm`);
   if(data.avgPower!=null) parts.push(`${Math.round(data.avgPower)} W`);
@@ -110,45 +122,39 @@ function decorateImporter(){
   input.setAttribute('accept','.fit,.gpx,.tcx,.csv');
   const wrapper=document.createElement('div');
   wrapper.className='gpx-import-actions';
-  wrapper.innerHTML='<div class="form-row" style="margin-top:12px"><select data-import-sport><option value="auto">Detectar deporte</option><option value="cycling">Bici</option><option value="running">Running</option><option value="boxing">Boxeo</option><option value="strength">Fuerza</option><option value="other">Otro</option></select><button type="button" class="primary" data-import-file disabled>Cargar archivo</button></div><p class="muted" data-import-file-label>No hay archivo seleccionado.</p><p class="muted">FIT: importa métricas de Garmin cuando estén presentes. GPX: importa track, distancia, tiempo y desnivel.</p><p data-import-msg></p>';
+  wrapper.innerHTML='<div class="form-row" style="margin-top:12px"><select data-import-sport><option value="auto">Detectar deporte</option><option value="cycling">Bici</option><option value="running">Running</option><option value="boxing">Boxeo</option><option value="strength">Fuerza</option><option value="other">Otro</option></select><button type="button" class="primary" data-import-file disabled>Cargar archivo</button></div><p class="muted" data-import-file-label>No hay archivo seleccionado.</p><p class="muted">FIT: usa el deporte grabado por Garmin. GPX: lo estima por nombre y velocidad, y te avisamos de la confianza.</p><p data-import-msg></p>';
   input.insertAdjacentElement('afterend',wrapper);
   const button=wrapper.querySelector('[data-import-file]');
   const sport=wrapper.querySelector('[data-import-sport]');
   const fileLabel=wrapper.querySelector('[data-import-file-label]');
   const msg=wrapper.querySelector('[data-import-msg]');
-  input.addEventListener('change',()=>{
-    const file=input.files?.[0];
-    fileLabel.textContent=file?`Seleccionado: ${file.name}`:'No hay archivo seleccionado.';
-    button.disabled=!file;
-    msg.textContent='';
-  });
+  input.addEventListener('change',()=>{const file=input.files?.[0];fileLabel.textContent=file?`Seleccionado: ${file.name}`:'No hay archivo seleccionado.';button.disabled=!file;msg.textContent=''});
   button.addEventListener('click',async()=>{
-    const file=input.files?.[0];
-    if(!file) return;
+    const file=input.files?.[0];if(!file) return;
     const isFit=/\.fit$/i.test(file.name),isGpx=/\.gpx$/i.test(file.name);
     if(!isFit&&!isGpx){showMessage(msg,'En esta versión la carga real está activa para FIT y GPX.','error');return}
     try{
       button.disabled=true;button.textContent=isFit?'Leyendo FIT…':'Leyendo GPX…';
       const data=isFit?await parseFit(file):parseGpx(await file.text(),file.name);
-      const state=readState();
-      if(!state) throw new Error('No se ha podido leer el estado local de MCP Core.');
+      const state=readState();if(!state) throw new Error('No se ha podido leer el estado local de MCP Core.');
       state.completed=Array.isArray(state.completed)?state.completed:[];
-      const selectedSport=sport.value==='auto'?(data.sport||'cycling'):sport.value;
+      const autoSport=isFit?(data.sport||'other'):(data.detectedSport||'other');
+      const selectedSport=sport.value==='auto'?autoSport:sport.value;
       state.completed.unshift({
         id:crypto.randomUUID(),title:data.name,date:data.date,sport:selectedSport,
-        duration:data.durationMin||0,actualDuration:data.durationMin||0,intensity:'moderate',priority:'normal',source:data.source,
-        completed:true,completedAt:new Date().toISOString(),rpe:5,
+        duration:data.durationMin||0,actualDuration:data.durationMin||0,intensity:null,priority:'normal',source:data.source,
+        completed:true,completedAt:new Date().toISOString(),rpe:null,
         distanceKm:data.distanceKm,elevationM:data.elevationM,avgHr:data.avgHr??null,maxHr:data.maxHr??null,
         avgPower:data.avgPower??null,normalizedPower:data.normalizedPower??null,avgCadence:data.avgCadence??null,calories:data.calories??null,
+        avgSpeedKmh:data.avgSpeedKmh??null,paceMinKm:data.paceMinKm??null,
+        sportDetection:isGpx?{confidence:data.detectionConfidence,reason:data.detectionReason}:null,
         importFileName:file.name
       });
       writeState(state);
-      showMessage(msg,`${isFit?'FIT':'GPX'} cargado${summary(data)?`: ${summary(data)}`:''}. Recargando…`);
+      const detection=isGpx&&sport.value==='auto'?` · Deporte: ${selectedSport==='running'?'Running':selectedSport==='cycling'?'Bici':'Sin clasificar'} (${data.detectionReason})`:'';
+      showMessage(msg,`${isFit?'FIT':'GPX'} cargado${summary(data,selectedSport)?`: ${summary(data,selectedSport)}`:''}${detection}. Recargando…`);
       setTimeout(()=>location.reload(),900);
-    }catch(err){
-      showMessage(msg,err?.message||'No se ha podido cargar el archivo.','error');
-      button.disabled=false;button.textContent='Cargar archivo';
-    }
+    }catch(err){showMessage(msg,err?.message||'No se ha podido cargar el archivo.','error');button.disabled=false;button.textContent='Cargar archivo'}
   });
 }
 
