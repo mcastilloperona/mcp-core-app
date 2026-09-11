@@ -1,4 +1,4 @@
-const CACHE='mcp-core-v025';
+const CACHE='mcp-core-v0251';
 const ASSETS=['./index.html','./styles-v2.css','./app-v2.js','./import-v2.js','./postload-v2.js','./day-state-v2.js','./manifest.webmanifest','./icon.svg'];
 
 self.addEventListener('install',event=>{
