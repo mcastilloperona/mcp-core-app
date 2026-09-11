@@ -1,5 +1,8 @@
 const DAY_KEY='mcp-core-v02';
 const DAY_TODAY=new Date().toISOString().slice(0,10);
+const UI_VERSION='v0.2.5';
+let dayDecorating=false;
+
 function dayRead(){try{return JSON.parse(localStorage.getItem(DAY_KEY)||'null')}catch{return null}}
 function dayWrite(s){localStorage.setItem(DAY_KEY,JSON.stringify(s))}
 function daySportLabel(s){return ({running:'Running',cycling:'Bici',boxing:'Boxeo',strength:'Fuerza',other:'Otro'})[s]||s||'Actividad'}
@@ -28,9 +31,10 @@ function buildCard(){
  const state=dayRead();if(!state)return null;const x=currentDayState(state);if(!x.done.length)return null;
  const wrap=document.createElement('section');wrap.className='card';wrap.id='mcp-evolving-day';
  wrap.innerHTML=`<div class="card-title"><div><span class="eyebrow">ESTADO ACTUAL DEL DÍA</span><h2>El día sigue abierto</h2></div><span class="pill ${x.level}">${x.label}</span></div>
- <div class="metrics big"><div><span>ESTADO INICIAL</span><b>${x.initial==null?'—':x.initial+'/100'}</b></div><div><span>CARGA HECHA</span><b>${x.totalMins} min</b></div><div><span>ESTADO ACTUAL</span><b>${x.current==null?'—':x.current+'/100'}</b></div></div>
+ <div class="metrics big"><div><span>ESTADO INICIAL</span><b>${x.initial==null?'—':x.initial+'/100'}</b></div><div><span>CARGA HECHA</span><b>${Math.round(x.totalMins)} min</b></div><div><span>ESTADO ACTUAL</span><b>${x.current==null?'—':x.current+'/100'}</b></div></div>
  <div>${x.done.map(a=>`<p class="muted">✓ ${activityLine(a)}</p>`).join('')}</div>
  <p><b>Qué haría ahora:</b> ${x.advice}</p>
+ <p class="muted">El estado actual es una estimación MCP basada en el check-in inicial, la carga acumulada y, si lo completas, el mini check-in postentreno.</p>
  <details ${x.pc?'':'open'}><summary>${x.pc?'Actualizar':'Hacer'} mini check-in postentreno</summary>
  <form id="postWorkoutCheck" style="margin-top:12px">
   <p><b>¿Cómo te ha dejado la última sesión?</b></p><div class="choices"><button type="button" class="choice" data-pc="feeling" data-value="good">Bien</button><button type="button" class="choice" data-pc="feeling" data-value="loaded">Cargado</button><button type="button" class="choice" data-pc="feeling" data-value="tired">Muy cansado</button><button type="button" class="choice" data-pc="feeling" data-value="exhausted">Vacío</button></div>
@@ -43,15 +47,33 @@ function buildCard(){
 function bindPost(card){
  const state=dayRead(),existing=state?.postCheckins?.[DAY_TODAY]||{},sel={...existing};
  card.querySelectorAll('[data-pc]').forEach(b=>{const k=b.dataset.pc;if(sel[k]===b.dataset.value)b.classList.add('selected');b.onclick=()=>{sel[k]=b.dataset.value;card.querySelectorAll(`[data-pc="${k}"]`).forEach(x=>x.classList.toggle('selected',x===b))}});
- const f=card.querySelector('#postWorkoutCheck');if(f)f.onsubmit=e=>{e.preventDefault();const s=dayRead();s.postCheckins=s.postCheckins||{};s.postCheckins[DAY_TODAY]={feeling:sel.feeling||'good',energy:sel.energy||'normal',pain:sel.pain||'no',updatedAt:new Date().toISOString()};dayWrite(s);decorateDay(true)};
+ const f=card.querySelector('#postWorkoutCheck');if(f)f.onsubmit=e=>{e.preventDefault();const s=dayRead();s.postCheckins=s.postCheckins||{};s.postCheckins[DAY_TODAY]={feeling:sel.feeling||'good',energy:sel.energy||'normal',pain:sel.pain||'no',updatedAt:new Date().toISOString()};dayWrite(s);const old=document.querySelector('#mcp-evolving-day');if(old)old.remove();queueMicrotask(decorateDay)};
 }
-function relabelMorning(){const header=document.querySelector('.hero .status small');if(header&&header.textContent.includes('/100'))header.insertAdjacentHTML('beforebegin','<span style="display:block;font-size:10px;opacity:.72">ESTADO INICIAL</span>');const metric=[...document.querySelectorAll('.metrics span')].find(x=>x.textContent.trim()==='RECUPERACIÓN');if(metric)metric.textContent='ESTADO AL EMPEZAR'}
-function decorateDay(force=false){
- if(!location.pathname.endsWith('/')&&!location.pathname.endsWith('index.html'))return;
- const main=document.querySelector('main.screen');if(!main)return;
- const old=document.querySelector('#mcp-evolving-day');if(old)old.remove();
- relabelMorning();const card=buildCard();if(!card)return;
- const featured=[...main.querySelectorAll('section.card')].find(s=>s.querySelector('.eyebrow')?.textContent.includes('RECOMENDACIÓN MCP CORE'));
- if(featured)featured.insertAdjacentElement('beforebegin',card);else main.appendChild(card);bindPost(card);
+function patchVersion(){
+ document.title=`MCP Core · ${UI_VERSION}`;
+ const badge=[...document.body.children].find(el=>el.textContent?.trim().startsWith('Versión '));if(badge)badge.textContent=`Versión ${UI_VERSION.replace(/^v/,'')}`;
+ document.querySelectorAll('.brand').forEach(el=>{el.textContent=el.textContent.replace(/v0\.2(?:\.\d+)?/g,UI_VERSION)});
+ document.querySelectorAll('.note').forEach(el=>{el.innerHTML=el.innerHTML.replace(/v0\.2(?:\.\d+)?/g,UI_VERSION)});
 }
-const dayObs=new MutationObserver(()=>decorateDay());dayObs.observe(document.documentElement,{childList:true,subtree:true});decorateDay();
+function relabelMorning(){
+ const header=document.querySelector('.hero .status small');
+ if(header&&header.textContent.includes('/100')&&!header.parentElement.querySelector('[data-initial-label]'))header.insertAdjacentHTML('beforebegin','<span data-initial-label style="display:block;font-size:10px;opacity:.72">ESTADO INICIAL</span>');
+ const metric=[...document.querySelectorAll('.metrics span')].find(x=>x.textContent.trim()==='RECUPERACIÓN');if(metric)metric.textContent='ESTADO AL EMPEZAR';
+}
+function decorateDay(){
+ if(dayDecorating)return;dayDecorating=true;
+ try{
+  patchVersion();
+  const main=document.querySelector('main.screen');if(!main)return;
+  relabelMorning();
+  if(document.querySelector('#mcp-evolving-day'))return;
+  const featured=[...main.querySelectorAll('section.card')].find(s=>s.querySelector('.eyebrow')?.textContent.includes('RECOMENDACIÓN MCP CORE'));
+  if(!featured)return;
+  const card=buildCard();if(!card)return;
+  featured.insertAdjacentElement('beforebegin',card);bindPost(card);
+ } finally {dayDecorating=false}
+}
+let dayTimer=null;
+const dayObs=new MutationObserver(()=>{clearTimeout(dayTimer);dayTimer=setTimeout(decorateDay,30)});
+dayObs.observe(document.documentElement,{childList:true,subtree:true});
+decorateDay();
