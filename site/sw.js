@@ -1,5 +1,5 @@
-const CACHE='mcp-core-v023';
-const ASSETS=['./index.html','./styles-v2.css','./app-v2.js','./import-v2.js','./manifest.webmanifest','./icon.svg'];
+const CACHE='mcp-core-v024';
+const ASSETS=['./index.html','./styles-v2.css','./app-v2.js','./import-v2.js','./postload-v2.js','./manifest.webmanifest','./icon.svg'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()));
