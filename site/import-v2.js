@@ -43,9 +43,10 @@ function decorateImporter(){
   input.dataset.mcpBound='1';
   const wrapper=document.createElement('div');
   wrapper.className='gpx-import-actions';
-  wrapper.innerHTML='<div class="form-row" style="margin-top:12px"><button type="button" class="primary" data-import-gpx disabled>Cargar archivo</button></div><p class="muted" data-gpx-file>No hay archivo seleccionado.</p><p data-gpx-msg></p>';
+  wrapper.innerHTML='<div class="form-row" style="margin-top:12px"><select data-gpx-sport><option value="cycling">Bici</option><option value="running">Running</option><option value="other">Otro</option></select><button type="button" class="primary" data-import-gpx disabled>Cargar archivo</button></div><p class="muted" data-gpx-file>No hay archivo seleccionado.</p><p data-gpx-msg></p>';
   input.insertAdjacentElement('afterend',wrapper);
   const button=wrapper.querySelector('[data-import-gpx]');
+  const sport=wrapper.querySelector('[data-gpx-sport]');
   const fileLabel=wrapper.querySelector('[data-gpx-file]');
   const msg=wrapper.querySelector('[data-gpx-msg]');
   input.addEventListener('change',()=>{
@@ -71,7 +72,7 @@ function decorateImporter(){
         id:crypto.randomUUID(),
         title:data.name,
         date:data.date,
-        sport:'cycling',
+        sport:sport.value,
         duration:data.durationMin||0,
         actualDuration:data.durationMin||0,
         intensity:'moderate',
